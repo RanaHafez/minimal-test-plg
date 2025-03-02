@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>GLB Model Render</title>
+    <style></style>
+  </head>
+  <body>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden; /* Prevents any overflow */
+      }
+
+      canvas {
+        display: block; /* Removes any space below the canvas */
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r126/three.min.js"
+      integrity="sha512-n8IpKWzDnBOcBhRlHirMZOUvEq2bLRMuJGjuVqbzUJwtTsgwOgK5aS0c1JA647XWYfqvXve8k3PtZdzpipFjgg=="
+      crossorigin="anonymous"
+    ></script>
+    <script src="https://unpkg.com/three@0.126.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script type="module">
+      const getModelFromQuery = () => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const base64Model = urlParams.get("model");
+        // Decode the Base64 URL back to the original signed URL
+        // const decodedUrl = atob(base64Model); // Decoding Base64 to the signed URL
+        return base64Model;
+      };
+
+      // Set up the scene, camera, and renderer
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(
+        75,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        1000
+      );
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      const screenshotScale = 2; // Increase for higher quality
+      renderer.setSize(
+        window.innerWidth * window.devicePixelRatio,
+        window.innerHeight * window.devicePixelRatio
+      ); // Set background color
+      document.body.appendChild(renderer.domElement);
+
+      // Add the camera to the scene
+      scene.add(camera);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 1); // Soft global light
+      scene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 3);
+      directionalLight.position.set(5, 5, 5);
+      scene.add(directionalLight);
+
+      const pointLight = new THREE.PointLight(0xffffff, 5);
+      pointLight.position.set(-5, 5, 5);
+      scene.add(pointLight);
+
+      // Load the GLB model
+      const loader = new THREE.GLTFLoader();
+      const modelUrl = getModelFromQuery();
+      const tvec3 = new THREE.Vector3();
+
+      loader.load(
+        modelUrl,
+        (gltf) => {
+          const model = gltf.scene;
+          scene.add(model);
+          // Compute the bounding box of the loaded model
+          const box = new THREE.Box3().setFromObject(model); // `model` is your loaded GLTF object
+
+          // Get camera properties
+          const fov = camera.fov; // Field of view of the camera
+          const aspect = window.innerWidth / window.innerHeight; // Aspect ratio (width / height)
+          const pov = calcFittingPOV(camera, fov, aspect, box);
+
+          // Update the camera position and target
+          camera.position.copy(pov.position);
+          camera.lookAt(pov.target);
+          const animate = () => {
+            requestAnimationFrame(animate);
+            renderer.setClearColor(0xf0e68c, 1);
+            renderer.render(scene, camera);
+          };
+          animate();
+          console.log("Model loaded and correctly framed!");
+        },
+        undefined, // Progress callback
+        (error) => {
+          console.error("Error loading model:", error);
+          // Log the error to the console in a way that Puppeteer can capture it
+          console.error(`MODEL_LOAD_ERROR: ${modelUrl}`);
+        }
+      );
+
+      function calcFittingPOV(
+        camera,
+        fov,
+        aspect,
+        volume,
+        fitOffset = 20,
+        angle = Math.PI / 3
+      ) {
+        const result = {
+          position: new THREE.Vector3(),
+          target: new THREE.Vector3(),
+        };
+
+        // Get the center of the object (the center of the bounding box)
+        volume.getCenter(result.target);
+
+        // Compute the bounding box size (size of the object)
+        const bbSize = volume.getSize(tvec3);
+        const maxSize = Math.max(bbSize.x, bbSize.y, bbSize.z); // Maximum dimension of the object
+        const minSize = Math.min(bbSize.x, bbSize.y, bbSize.z); // Minimum dimension of the object
+
+        // Dynamically adjust fitOffset based on the model's size
+        // Larger models will have a higher offset to place the camera further away
+        // Smaller models will have a lower offset to bring the camera closer
+        fitOffset = Math.max(20, Math.min(3, fitOffset * (maxSize / 10))); // Scale the fitOffset by model size
+
+        console.log(fitOffset);
+        // Calculate the appropriate distance based on FOV, aspect ratio, and size
+        const fitHeightDistance =
+          maxSize / (2 * Math.atan((Math.PI * fov) / 360)); // Height distance for fit
+        const fitWidthDistance = fitHeightDistance / aspect; // Width distance for fit
+        const distance =
+          fitOffset * Math.max(fitHeightDistance, fitWidthDistance); // Final distance
+
+        // Calculate target position offset to avoid camera clipping the model
+        const offsetHeight = maxSize * 0.5;
+
+        // Compute camera position using a circular orbit, allowing for model rotation
+        result.position.set(
+          result.target.x + distance * Math.cos(angle), // X position
+          result.target.y + offsetHeight + 0.5, // Y (height above the object)
+          result.target.z + distance * Math.sin(angle) // Z position
+        );
+
+        // Ensure that the camera's FOV properly fits the model, adjusting for aspect ratio
+
+        const newFov =
+          2 * Math.atan((maxSize * 1.2) / (2 * distance)) * (180 / Math.PI);
+        camera.fov = Math.min(newFov, 75); // Clamp FOV to a reasonable range, e.g., 75 degrees
+        camera.updateProjectionMatrix();
+        console.log(camera.fov);
+        return result;
+      }
+    </script>
+  </body>
+</html>
